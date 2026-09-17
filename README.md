@@ -1,2 +1,2 @@
-# realtime-chat-ts
+# nest-realtime-chat
 NestJS modular monolith Realtime Chat + Next.js Frontend
