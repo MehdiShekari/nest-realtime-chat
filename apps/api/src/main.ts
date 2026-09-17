@@ -1,19 +1,29 @@
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
+import { join } from 'node:path';
 import { AppModule } from './app.module';
 import { AppConfigService } from './config/app-config.service';
 import { RedisIoAdapter } from './websocket/redis-io.adapter';
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule, { bufferLogs: false });
+
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: false,
+  });
 
   const config = app.get(AppConfigService);
 
-  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+  app.use(
+    helmet({
+      // Avatars are served from the same origin and consumed by the web app.
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
   app.use(cookieParser());
 
   app.enableCors({
@@ -21,6 +31,14 @@ async function bootstrap(): Promise<void> {
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
+  });
+
+  // Serve avatars written by AvatarService.
+  app.useStaticAssets(join(process.cwd(), 'uploads'), {
+    prefix: '/uploads/',
+    // Uploads are content-addressed by UUID — safe to cache aggressively.
+    maxAge: '7d',
+    index: false,
   });
 
   app.setGlobalPrefix('api');
@@ -46,10 +64,8 @@ async function bootstrap(): Promise<void> {
     .setTitle('Realtime Chat API')
     .setDescription('REST + WebSocket API for the realtime chat and notification platform')
     .setVersion('1.0.0')
-    .addBearerAuth(
-      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
-      'access-token',
-    )
+    .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'access-token')
+    .addCookieAuth('refresh_token')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
