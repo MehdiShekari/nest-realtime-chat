@@ -1,0 +1,171 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserStatus {
+  ONLINE
+  OFFLINE
+  AWAY
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum NotificationType {
+  NEW_MESSAGE
+  MENTION
+  ADDED_TO_GROUP
+  REMOVED_FROM_GROUP
+  GROUP_RENAMED
+  CONVERSATION_CREATED
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String     @id @default(cuid())
+  name         String
+  username     String     @unique
+  email        String     @unique
+  passwordHash String
+  avatarUrl    String?
+  bio          String?
+  status       UserStatus @default(OFFLINE)
+  lastSeenAt   DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  refreshTokens        RefreshToken[]
+  conversationsCreated Conversation[]       @relation("ConversationCreatedBy")
+  memberships          ConversationMember[]
+  messages             Message[]
+  messageReads         MessageRead[]
+  notifications        Notification[]
+
+  @@index([name])
+  @@index([status])
+}
+
+model RefreshToken {
+  id           String    @id @default(cuid())
+  userId       String
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+  replacedById String?
+  userAgent    String?
+  ipAddress    String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Conversation {
+  id            String           @id @default(cuid())
+  type          ConversationType
+  name          String?
+  /// Deterministic "idA:idB" (sorted) for DIRECT conversations. Enforces DM uniqueness.
+  directKey     String?          @unique
+  createdById   String
+  lastMessageAt DateTime         @default(now())
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  createdBy User                 @relation("ConversationCreatedBy", fields: [createdById], references: [id])
+  members   ConversationMember[]
+  messages  Message[]
+
+  @@index([lastMessageAt(sort: Desc)])
+  @@index([createdById])
+}
+
+model ConversationMember {
+  id                String     @id @default(cuid())
+  conversationId    String
+  userId            String
+  role              MemberRole @default(MEMBER)
+  joinedAt          DateTime   @default(now())
+  /// Read pointer — drives unread counts without COUNT(*) over MessageRead.
+  lastReadMessageId String?
+  lastReadAt        DateTime?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@index([conversationId, role])
+}
+
+model Message {
+  id             String    @id @default(cuid())
+  conversationId String
+  senderId       String
+  content        String    @db.Text
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  editedAt       DateTime?
+  deletedAt      DateTime?
+  /// Set when a DIRECT recipient with a live socket receives the broadcast.
+  deliveredAt    DateTime?
+
+  conversation Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User          @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  reads        MessageRead[]
+
+  @@index([conversationId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([senderId])
+}
+
+/// Written for DIRECT conversations only — see architecture notes §1.3.
+model MessageRead {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  readAt    DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String
+  data      Json?
+  isRead    Boolean          @default(false)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+}
